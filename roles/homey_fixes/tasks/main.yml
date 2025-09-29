@@ -1,0 +1,110 @@
+---
+- name: List homey* unit files (best-effort)
+  ansible.builtin.shell: "systemctl --root=/ list-unit-files --type=service --no-legend 'homey*' | awk '{print $1}'"
+  register: homey_units
+  changed_when: false
+  failed_when: false
+
+- name: Disable + mask homey* (and extras)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    masked: true
+    state: stopped
+  loop: "{{ (homey_units.stdout_lines | default([])) + ['rrdcached','dphys-swapfile'] }}"
+  failed_when: false
+
+- name: Install cpcd.service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/cpcd.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=CPCd
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=simple
+      User=root
+      ExecStart=/usr/bin/cpcd --conf /etc/cpcd.conf -a 4.4.2-000
+      Restart=always
+      RestartSec=5
+      TimeoutStopSec=5
+      StandardOutput=journal
+      StandardError=journal
+      SyslogIdentifier=cpcd
+      # Optional: raise limits for busy daemons
+      # LimitNOFILE=65535
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: 
+    - systemd daemon-reload
+
+- name: Install zigbeed-socat.service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/zigbeed-socat.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Zigbee NCP PTY bridge (socat)
+      # If zigbeed stops, also stop/restart this helper
+      PartOf=zigbeed.service
+
+      [Service]
+      Type=simple
+      User=root
+      # Clean up stale symlinks before starting new ptys
+      ExecStartPre=/bin/rm -f /dev/ttyZigbeeNCP /tmp/ttyZigbeeNCP
+      ExecStart=/usr/bin/socat pty,link=/dev/ttyZigbeeNCP,ignoreeof pty,link=/tmp/ttyZigbeeNCP,ignoreeof
+      Restart=always
+      RestartSec=2
+      StandardOutput=journal
+      StandardError=journal
+      SyslogIdentifier=zigbeed-socat
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: 
+    - systemd daemon-reload
+
+- name: Install zigbeed.service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/zigbeed.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Zigbeed
+      Requires=zigbeed-socat.service
+      After=zigbeed-socat.service
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=simple
+      User=root
+      ExecStart=/usr/bin/zigbeed
+      Restart=always
+      RestartSec=5
+      TimeoutStopSec=5
+      StandardOutput=journal
+      StandardError=journal
+      SyslogIdentifier=zigbeed
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: 
+    - systemd daemon-reload
+
+- name: Enable + unmask needed systemd units
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    masked: false
+    state: started
+  loop:
+    - cpcd
+    - zigbeed
+    - zigbeed-socat
+  failed_when: false

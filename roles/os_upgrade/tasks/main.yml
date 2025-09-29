@@ -1,0 +1,273 @@
+---
+# Guard to block service starts while in chroot/upgrade
+- name: Place policy-rc.d guard
+  ansible.builtin.copy:
+    dest: /usr/sbin/policy-rc.d
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      exit 101
+
+- name: Point rsyslog outchannels to /var/log
+  ansible.builtin.replace:
+    path: /etc/rsyslog.conf
+    regexp: '(^\s*\$outchannel\s+\S+,\s*)/user/log/'
+    replace: '\1/var/log/'
+
+- name: Create target log files
+  ansible.builtin.file:
+    path: "/var/log/{{ item }}"
+    state: touch
+    owner: root
+    group: adm
+    mode: "0640"
+  loop: [homey-pro.log, kernel.log, system.log]
+
+- name: Ensure NetworkManager conf
+  ansible.builtin.copy:
+    dest: "/etc/NetworkManager/conf.d/homey.conf"
+    mode: "0644"
+    content: |
+      [main]
+      dns=dnsmasq
+      [connection]
+      wifi.powersave = 2
+      [device]
+      wifi.scan-rand-mac-address=no
+
+# === Repo migration to Bookworm ===
+- name: Temporarily disable raspbian repo (if present)
+  ansible.builtin.command:
+    cmd: mv /etc/apt/sources.list.d/raspbian.list /etc/apt/sources.list.d/raspbian.list.disabled
+  args: { creates: /etc/apt/sources.list.d/raspbian.list.disabled }
+  failed_when: false
+
+- name: Stat /etc/apt/sources.list
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list
+  register: sl_stat
+
+- name: Find *.list in sources.list.d
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns: "*.list"
+    file_type: file
+  register: listd_files_backports
+
+- name: Comment out any *-backports in main list
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list
+    regexp: '^(\s*deb(-src)?\s+.*\s(bullseye|bookworm)-backports(\s|/).*)$'
+    replace: '# \1'
+  when: sl_stat.stat.exists
+
+- name: Comment out any *-backports in list.d
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '^(\s*deb(-src)?\s+.*\s(bullseye|bookworm)-backports(\s|/).*)$'
+    replace: '# \1'
+  loop: "{{ listd_files_backports.files }}"
+
+- name: apt-get clean (pre-update)
+  ansible.builtin.command: apt-get clean
+  environment: "{{ apt_env }}"
+  changed_when: false
+
+- name: Update APT cache (Debian-only)
+  ansible.builtin.command: apt-get update
+  environment: "{{ apt_env }}"
+
+- name: Install gnupg + dirmngr + ca-certificates
+  ansible.builtin.command: >
+    bash -lc "apt-get -y install gnupg dirmngr ca-certificates"
+  environment: "{{ apt_env }}"
+
+- name: Ensure APT dirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /etc/apt/sources.list.d
+    - /etc/apt/keyrings
+    - /usr/share/keyrings
+
+- name: Find list.d (incl .disabled)
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns: "*.list*"
+    file_type: file
+  register: listd_files
+
+- name: Rewrite {{ prev_release }} -> {{ target_release }} in /etc/apt/sources.list
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list
+    regexp: '\b{{ prev_release }}\b'
+    replace: "{{ target_release }}"
+  when: sl_stat.stat.exists
+
+- name: Rewrite {{ prev_release }} -> {{ target_release }} in list.d/*.list
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '\b{{ prev_release }}\b'
+    replace: "{{ target_release }}"
+  loop: "{{ listd_files.files | selectattr('path','search','\\.list$') | list }}"
+
+- name: Ensure Raspberry Pi archive repo
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/raspi.list
+    mode: "0644"
+    content: |
+      deb http://archive.raspberrypi.com/debian {{ target_release }} main
+
+- name: Ensure Raspbian repo
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/raspbian.list
+    mode: "0644"
+    content: |
+      deb http://raspbian.raspberrypi.org/raspbian/ {{ target_release }} main contrib non-free rpi
+
+- name: Add Raspbian archive signing key (9165938D90FDDD2E)
+  ansible.builtin.apt_key:
+    id: "9165938D90FDDD2E"
+    keyserver: "hkp://keyserver.ubuntu.com:80"
+    state: present
+
+- name: Install keyring packages (best-effort)
+  ansible.builtin.command: >
+    bash -lc "apt-get -y install raspbian-archive-keyring debian-archive-keyring raspberrypi-archive-keyring || true"
+  environment: "{{ apt_env }}"
+
+- name: Switch raspbian.list to signed-by when keyring exists
+  ansible.builtin.stat:
+    path: /usr/share/keyrings/raspbian-archive-keyring.gpg
+  register: raspbian_kr
+
+- name: Use signed-by in raspbian.list
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/raspbian.list
+    regexp: '^deb\s+http://raspbian\.raspberrypi\.org/raspbian/'
+    line: 'deb [signed-by=/usr/share/keyrings/raspbian-archive-keyring.gpg] http://raspbian.raspberrypi.org/raspbian/ {{ target_release }} main contrib non-free rpi'
+  when: raspbian_kr.stat.exists | default(false)
+
+- name: Ensure bookworm-backports repo is present
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/debian-backports.list
+    mode: "0644"
+    content: |
+      deb http://deb.debian.org/debian {{ target_release }}-backports main contrib non-free non-free-firmware
+
+- name: apt-get clean (before full update)
+  ansible.builtin.command: apt-get clean
+  environment: "{{ apt_env }}"
+  changed_when: false
+
+- name: Update APT cache (Bookworm)
+  ansible.builtin.command: apt-get update
+  environment: "{{ apt_env }}"
+
+# === Bootstrap zstd-capable dpkg/apt and upgrade passes ===
+- name: Bootstrap dpkg/apt with Zstd support
+  ansible.builtin.command: >
+    bash -lc "apt-get -y install libzstd1 zstd dpkg apt tar"
+  environment: "{{ apt_env }}"
+
+- name: Minimal upgrade
+  ansible.builtin.command: >
+    bash -lc "apt-get -y upgrade -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+  environment: "{{ apt_env }}"
+
+- name: Dist-upgrade
+  ansible.builtin.command: >
+    bash -lc "apt-get -y dist-upgrade -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+  environment: "{{ apt_env }}"
+
+- name: Full-upgrade
+  ansible.builtin.command: >
+    bash -lc "apt-get -y full-upgrade -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+  environment: "{{ apt_env }}"
+
+- name: Autoremove (purge)
+  ansible.builtin.command: >
+    bash -lc "apt-get -y --auto-remove --purge autoremove || true"
+  environment: "{{ apt_env }}"
+
+- name: apt-get clean (post-upgrade)
+  ansible.builtin.command: apt-get clean
+  environment: "{{ apt_env }}"
+  changed_when: false
+
+- name: Ensure dpkg is fully configured
+  ansible.builtin.command: dpkg --configure -a
+  register: dpkg_configure
+  changed_when: "'Setting up ' in (dpkg_configure.stdout | default(''))"
+  failed_when: false
+
+- name: Fix broken packages (best-effort)
+  ansible.builtin.command: >
+    bash -lc "apt -y --fix-broken install || true"
+  environment: "{{ apt_env }}"
+  failed_when: false
+
+- name: Ensure udisks2 is present (best-effort)
+  ansible.builtin.command: >
+    bash -lc "apt-get -y install udisks2 || true"
+  environment: "{{ apt_env }}"
+  failed_when: false
+
+# === AppArmor enablement (OS-level) ===
+- name: Ensure "apparmor=1" in cmdline.txt
+  ansible.builtin.shell: |
+    set -e
+    if grep -qw 'apparmor=1' /boot/cmdline.txt; then echo ok; else sed -i 's|$| apparmor=1|' /boot/cmdline.txt; echo changed; fi
+  register: apparmor_flag1
+  changed_when: "'changed' in (apparmor_flag1.stdout|default(''))"
+
+- name: Ensure "security=apparmor" in cmdline.txt
+  ansible.builtin.shell: |
+    set -e
+    if grep -qw 'security=apparmor' /boot/cmdline.txt; then echo ok; else sed -i 's|$| security=apparmor|' /boot/cmdline.txt; echo changed; fi
+  register: apparmor_flag2
+  changed_when: "'changed' in (apparmor_flag2.stdout|default(''))"
+
+- name: Update fstab
+  ansible.builtin.copy:
+    dest: /etc/fstab
+    content: |
+      proc            /proc       proc    defaults          0       0
+      /dev/mmcblk0p1  /boot   vfat    defaults,flush    0       2
+      /dev/mmcblk0p2  /           ext4    defaults,noatime  0       1
+      tmpfs           /tmp        tmpfs   mode=1777,nosuid,nodev         0       0
+      tmpfs           /var/log    tmpfs   nosuid,nodev         0       0
+      tmpfs           /var/tmp    tmpfs   nosuid,nodev         0       0
+      securityfs /sys/kernel/security securityfs defaults 0 0
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install AppArmor packages
+  ansible.builtin.apt:
+    name: [apparmor, apparmor-utils]
+    state: present
+    force_apt_get: yes
+  environment: "{{ apt_env }}"
+
+- name: Enable apparmor service (don’t start now)
+  ansible.builtin.systemd:
+    name: apparmor
+    enabled: true
+    state: stopped
+  failed_when: false
+
+# Cleanup guard
+- name: Remove policy-rc.d so services can start normally later
+  ansible.builtin.file:
+    path: /usr/sbin/policy-rc.d
+    state: absent
+
+- name: Ensure growpart is available
+  ansible.builtin.apt:
+    name: cloud-guest-utils
+    state: present
+    update_cache: yes
+  tags: [growroot]

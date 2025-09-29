@@ -1,0 +1,2 @@
+getty_instance: ttyGS0
+getty_baud: 115200

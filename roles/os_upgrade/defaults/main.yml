@@ -1,0 +1,5 @@
+prev_release: bullseye
+target_release: bookworm
+apt_env:
+  DEBIAN_FRONTEND: noninteractive
+  APT_LISTCHANGES_FRONTEND: none

@@ -1,0 +1,49 @@
+# .pre-commit-config.yaml
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  # --- General hygiene ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-yaml
+        args: ["--allow-multiple-documents"]
+
+  # --- Ansible linting ---
+  - repo: https://github.com/ansible/ansible-lint
+    rev: v24.6.0
+    hooks:
+      - id: ansible-lint
+        name: ansible-lint
+        additional_dependencies: []   # e.g. ["ansible-core==2.16.*"] if you need to pin
+        # Limit to typical Ansible paths; adjust as needed
+        files: >
+          (?x)^(
+            (playbooks|roles|inventories|group_vars|host_vars|molecule|tasks|handlers|vars)/
+            |.*\.(ya?ml)$
+          )
+
+  # --- Bash "black" (formatter) ---
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.7.0
+    hooks:
+      - id: shfmt
+        name: shfmt (format shell scripts)
+        # Format with 2 spaces, indent case, keep padding, simple redirects style
+        args: ["-i", "2", "-ci", "-kp", "-sr"]
+        types: [shell]
+
+  # --- Bash linting ---
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        name: shellcheck (lint shell scripts)
+        types: [shell]
+        # You can tweak severity or disable specific rules:
+        # args: ["--severity=style"]

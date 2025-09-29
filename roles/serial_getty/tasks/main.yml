@@ -1,0 +1,28 @@
+---
+- name: Ensure drop-in dir exists
+  ansible.builtin.file:
+    path: "/etc/systemd/system/serial-getty@{{ getty_instance }}.service.d"
+    state: directory
+    mode: "0755"
+
+- name: Install override.conf
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/serial-getty@{{ getty_instance }}.service.d/override.conf"
+    mode: "0644"
+    content: |
+      [Unit]
+      After=dev-%i.device
+      BindsTo=dev-%i.device
+      ConditionPathExists=/dev/%I
+      [Service]
+      ExecStartPre=/bin/sh -c 'for i in $(seq 1 40); do [ -c /dev/%I ] && exit 0; sleep 0.25; done; echo "/dev/%I not found"; exit 1'
+      ExecStart=
+      ExecStart=-/usr/sbin/agetty -o '-p -- \u' -L {{ getty_baud }} %I $TERM
+  notify: systemd daemon-reload
+
+- name: Enable and start serial-getty
+  ansible.builtin.systemd:
+    name: "serial-getty@{{ getty_instance }}.service"
+    enabled: true
+    state: started
+  failed_when: false  # ok in chroot/CI

@@ -1,0 +1,12 @@
+---
+- hosts: image
+  gather_facts: false
+  roles:
+    - role: homey_fixes
+      tags: ['homey']
+    - role: serial_getty
+      tags: ['console']
+    - role: os_upgrade
+      tags: ['upgrade']
+    - role: home_assistant
+      tags: ['ha']

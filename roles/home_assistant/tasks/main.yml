@@ -1,0 +1,123 @@
+---
+- name: Install HA OS Agent
+  ansible.builtin.apt:
+    deb: "https://github.com/home-assistant/os-agent/releases/download/1.7.2/os-agent_1.7.2_linux_aarch64.deb"
+    state: present
+    update_cache: yes
+
+- name: Install HA Supervised
+  ansible.builtin.apt:
+    deb: "https://github.com/home-assistant/supervised-installer/releases/latest/download/homeassistant-supervised.deb"
+    state: present
+    update_cache: yes
+  environment:
+    MACHINE: "{{ ha_machine }}"
+
+- name: Install services for MQTT bridge addon
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: homey-assistant-gpio.service
+      content: |
+        [Unit]
+        Description=Prepare Homey gpio
+        Wants=docker.service
+        After=docker.service
+
+        [Service]
+        Type=oneshot
+        ExecStart= /bin/bash -c ' \
+            # Configure GPIO CM4_RESET
+            echo "6" > /sys/class/gpio/export; \
+            echo "in" > /sys/class/gpio/gpio6/direction; \
+            echo "both" > /sys/class/gpio/gpio6/edge; \
+            # Configure GPIO ESP32_BOOT
+            echo "24" > /sys/class/gpio/export; \
+            echo "high" > /sys/class/gpio/gpio24/direction; \
+            # Configure GPIO ESP32_RESET
+            echo "25" > /sys/class/gpio/export; \
+            echo "high" > /sys/class/gpio/gpio25/direction; '
+        Restart=always
+        RestartSec=5
+    - name: prepare-homey-rootfs.service
+      content: |
+        [Unit]
+        Description=Prepare Homey proprietary rootfs tar in the current add-on worktree
+        Wants=docker.service
+        After=docker.service network-online.target
+        StartLimitIntervalSec=0
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/bin/prepare_homey_rootfs.sh
+        Nice=10
+    - name: prepare-homey-rootfs.path
+      content: |
+        [Unit]
+        Description=Watch for Homey add-on worktree (git sha folders) to appear/change
+        After=multi-user.target
+
+        [Path]
+        PathModified=/var/lib/homeassistant/addons/git
+        Persistent=true
+
+        [Install]
+        WantedBy=paths.target
+  notify:
+    - systemd daemon-reload
+
+- name: Enable services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - homey-assistant-gpio.service
+    - prepare-homey-rootfs.path
+
+- name: Disable services
+  ansible.builtin.systemd:
+    name: systemd-networkd-wait-online
+    enabled: false
+
+- name: Launch setup-wifi.sh
+  ansible.builtin.lineinfile:
+    path: /home/homey/.bashrc
+    line: |
+      if [ ! -f "$HOME/.wifi-setup-done" ]; then
+          sudo setup-wifi.sh && touch "$HOME/.wifi-setup-done"
+      fi
+    create: true
+    owner: homey
+    group: homey
+    mode: "0644"
+
+- name: Set homey password
+  ansible.builtin.user:
+    name: homey
+    password: "{{ 'homey' | password_hash('sha512') }}"
+
+- name: Create homeassistant share dir
+  ansible.builtin.file:
+    path: /var/lib/homeassistant/share
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+    recurse: true
+
+- name: Copy files
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode | default('644') }}"
+    owner: root
+    group: root
+  loop:
+    - src: setup-wifi.sh
+      dest: /usr/bin/setup-wifi.sh
+      mode: "0755"
+    - src: prepare_homey_rootfs.sh
+      dest: /usr/bin/prepare_homey_rootfs.sh
+      mode: "0755"
