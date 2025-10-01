@@ -87,7 +87,7 @@ It lets you restore your existing Homey Pro setup as a “Homey Assistant” bac
 7. **Recommended post-setup**
 
    * Configure backups to a network location.
-   * Install the [Homey Coprocessor Bridge add-on](https://github.com/MrDaGree/hassio-homey-coprocessor-bridge) for tighter integration.
+   * Install the [Homey Coprocessor Bridge add-on](https://github.com/MrDaGree/hassio-homey-coprocessor-bridge) for Z-Wave integration.
 
 ---
 
@@ -96,3 +96,13 @@ It lets you restore your existing Homey Pro setup as a “Homey Assistant” bac
 * Initialization can take several minutes depending on your device and network speed.
 * Always keep an original Homey Pro backup for safety.
 * The container must run with `--privileged` to access loop devices and partitions.
+
+## Zigbee (ZHA/Z2M)
+
+To utilize Zigbee on the "Homey Assistant", the setup is straight forward and works natively with the hardwarestack. Below is the settings I utilize for my ZHA setup.
+
+* Radio Type: `ezsp`
+* Serial Port: `/dev/ttyZigbeeNCP`
+* Baudrate: `115200`
+
+This works as on the Homey Pro, the Zigbee radio is exposed as a UART device right inside the OS. Unfortunately, the Z-Wave radio and other integrations are all behind a ESP32 chip that requires the [Coprocessor Bridge add-on](https://github.com/MrDaGree/hassio-homey-coprocessor-bridge) to unlock this functionality. I only have 1 Z-Wave button device, so I dont have much to test/develop the add-on with. I do plan to add LED integration.]
