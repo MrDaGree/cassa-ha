@@ -54,7 +54,7 @@ It lets you restore your existing Homey Pro setup as a “Homey Assistant” bac
    From the directory where the backup file is stored, run:
 
    ```bash
-   docker run --rm -it --privileged -v "$PWD:/work" homey-assistant \
+   docker run --rm -it --privileged -v "$PWD:/work" ghcr.io/mrdagree/homey-assistant:latest \
      "Homey Pro Backup 2025-09-06T22_47_06.627Z.homeyprobackup"
    ```
 
