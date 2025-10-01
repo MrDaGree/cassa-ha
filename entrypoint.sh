@@ -8,7 +8,7 @@ die(){ echo "ERROR: $*" >&2; exit 1; }
 # Usage: ./build-new-from-old.sh "<input .homeyprobackup|.img.gz|.img>"
 [[ $# -ge 1 ]] || die "Usage: $0 <input>"
 IN="/work/$1"
-PLAYBOOK="/work/playbook.yaml"   # mandatory
+PLAYBOOK="/ansible/playbook.yaml"   # mandatory
 [[ -e "$IN" ]]       || die "Input not found: $IN"
 [[ -f "$PLAYBOOK" ]] || die "Missing required playbook at $PLAYBOOK"
 
@@ -48,9 +48,13 @@ cleanup(){
   if [[ -n "$OLD_LOOP" ]]; then kpartx -d "$OLD_LOOP" 2>/dev/null || true; fi
   if [[ -n "$NEW_LOOP" ]]; then kpartx -d "$NEW_LOOP" 2>/dev/null || true; fi
 
-  # detach loops
-  [[ -n "$OLD_LOOP" ]] && losetup -d "$OLD_LOOP" 2>/dev/null || true
-  [[ -n "$NEW_LOOP" ]] && losetup -d "$NEW_LOOP" 2>/dev/null || true
+  # detach loops (fixed SC2015)
+  if [[ -n "$OLD_LOOP" ]]; then
+    losetup -d "$OLD_LOOP" 2>/dev/null || true
+  fi
+  if [[ -n "$NEW_LOOP" ]]; then
+    losetup -d "$NEW_LOOP" 2>/dev/null || true
+  fi
 
   # remove temp tarballs; keep images on error for inspection
   rm -f "$BOOT_TGZ" "$ROOT_TGZ" 2>/dev/null || true
@@ -66,7 +70,12 @@ refresh_dm(){
   kpartx -d "$loop" >/dev/null 2>&1 || true
   partprobe "$loop" >/dev/null 2>&1 || true
   kpartx -a -s "$loop" >/dev/null 2>&1 || true
-  command -v udevadm >/dev/null 2>&1 && udevadm settle || sleep 0.5
+  # fixed SC2015
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm settle
+  else
+    sleep 0.5
+  fi
 }
 wait_for(){
   local dev="$1" tries=200
@@ -247,7 +256,10 @@ mount --rbind /dev   /mnt/new_root/dev;  mount --make-rslave /mnt/new_root/dev
 mount --rbind /run   /mnt/new_root/run;  mount --make-rslave /mnt/new_root/run
 # DNS for apt/etc
 if ! mountpoint -q /mnt/new_root/etc/resolv.conf; then
-  [[ -L /mnt/new_root/etc/resolv.conf ]] && umount /mnt/new_root/etc/resolv.conf 2>/dev/null || true
+  # fixed SC2015
+  if [[ -L /mnt/new_root/etc/resolv.conf ]]; then
+    umount /mnt/new_root/etc/resolv.conf 2>/dev/null || true
+  fi
   mkdir -p /mnt/new_root/etc
   mount --bind /etc/resolv.conf /mnt/new_root/etc/resolv.conf
 fi
@@ -264,8 +276,10 @@ ansible-playbook -i "$INV" "$PLAYBOOK"
 log "Tearing down chroot/binds from /mnt/new_root (depth-first)"
 
 # First try to stop any lingering processes rooted in the chroot (best-effort)
-# (not fatal if tools are absent)
-command -v fuser >/dev/null 2>&1 && fuser -km /mnt/new_root 2>/dev/null || true
+# (not fatal if tools are absent) — fixed SC2015
+if command -v fuser >/dev/null 2>&1; then
+  fuser -km /mnt/new_root 2>/dev/null || true
+fi
 
 # Enumerate all mountpoints under /mnt/new_root (deepest first)
 if command -v findmnt >/dev/null 2>&1; then
@@ -276,30 +290,39 @@ else
 fi
 
 # Ensure /mnt/new_root/etc/resolv.conf is included if mounted
-mountpoint -q /mnt/new_root/etc/resolv.conf && MPS+=("/mnt/new_root/etc/resolv.conf")
+if mountpoint -q /mnt/new_root/etc/resolv.conf; then
+  MPS+=("/mnt/new_root/etc/resolv.conf")
+fi
 
 for m in "${MPS[@]}"; do
   umount "$m" 2>/dev/null || true
 done
 
-# Anything stubborn? try lazy umount, deepest first
+# Anything stubborn? try lazy umount, deepest first — fixed SC2015
 for m in "${MPS[@]}"; do
-  mountpoint -q "$m" && umount -l "$m" 2>/dev/null || true
+  if mountpoint -q "$m"; then
+    umount -l "$m" 2>/dev/null || true
+  fi
 done
 
-# Finally unmount the two top-level mounts if they’re still mounted
-mountpoint -q /mnt/new_root    && umount /mnt/new_root    2>/dev/null || true
-mountpoint -q /mnt/new_boot    && umount /mnt/new_boot    2>/dev/null || true
+# Finally unmount the two top-level mounts if they’re still mounted — fixed SC2015
+if mountpoint -q /mnt/new_root; then
+  umount /mnt/new_root 2>/dev/null || true
+fi
+if mountpoint -q /mnt/new_boot; then
+  umount /mnt/new_boot 2>/dev/null || true
+fi
 
 sync
 
-# Safety check
+# Safety check — fixed SC2015
 if grep -q '^/mnt/new_root' /proc/self/mounts; then
   log "Warning: something under /mnt/new_root is still mounted:"
   grep '^/mnt/new_root' /proc/self/mounts || true
   log "Proceeding with lazy detach as last resort."
-  # Lazy detach the root mount if it still shows
-  mountpoint -q /mnt/new_root && umount -l /mnt/new_root 2>/dev/null || true
+  if mountpoint -q /mnt/new_root; then
+    umount -l /mnt/new_root 2>/dev/null || true
+  fi
 fi
 
 # ---- fsck & final resize (now unmounted) ----

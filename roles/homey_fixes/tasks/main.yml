@@ -1,9 +1,16 @@
 ---
-- name: List homey* unit files (best-effort)
-  ansible.builtin.shell: "systemctl --root=/ list-unit-files --type=service --no-legend 'homey*' | awk '{print $1}'"
-  register: homey_units
-  changed_when: false
-  failed_when: false
+# Discover services without shell/awk
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Build list of homey* services
+  ansible.builtin.set_fact:
+    homey_fixes_homey_units: >-
+      {{ ansible_facts.services
+         | dict2items
+         | selectattr('key', 'match', '^homey.*\.service$')
+         | map(attribute='key')
+         | list }}
 
 - name: Disable + mask homey* (and extras)
   ansible.builtin.systemd:
@@ -11,7 +18,9 @@
     enabled: false
     masked: true
     state: stopped
-  loop: "{{ (homey_units.stdout_lines | default([])) + ['rrdcached','dphys-swapfile'] }}"
+  loop: "{{ (homey_fixes_homey_units | default([])) + (['rrdcached.service', 'dphys-swapfile.service'] | default([])) }}"
+  loop_control:
+    label: "{{ item }}"
   failed_when: false
 
 - name: Install cpcd.service
@@ -39,8 +48,8 @@
 
       [Install]
       WantedBy=multi-user.target
-  notify: 
-    - systemd daemon-reload
+  notify:
+    - Systemd daemon-reload
 
 - name: Install zigbeed-socat.service
   ansible.builtin.copy:
@@ -66,8 +75,8 @@
 
       [Install]
       WantedBy=multi-user.target
-  notify: 
-    - systemd daemon-reload
+  notify:
+    - Systemd daemon-reload
 
 - name: Install zigbeed.service
   ansible.builtin.copy:
@@ -94,8 +103,8 @@
 
       [Install]
       WantedBy=multi-user.target
-  notify: 
-    - systemd daemon-reload
+  notify:
+    - Systemd daemon-reload
 
 - name: Enable + unmask needed systemd units
   ansible.builtin.systemd:

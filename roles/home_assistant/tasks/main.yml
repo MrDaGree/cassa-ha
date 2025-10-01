@@ -3,15 +3,15 @@
   ansible.builtin.apt:
     deb: "https://github.com/home-assistant/os-agent/releases/download/1.7.2/os-agent_1.7.2_linux_aarch64.deb"
     state: present
-    update_cache: yes
+    update_cache: true
 
 - name: Install HA Supervised
   ansible.builtin.apt:
     deb: "https://github.com/home-assistant/supervised-installer/releases/latest/download/homeassistant-supervised.deb"
     state: present
-    update_cache: yes
+    update_cache: true
   environment:
-    MACHINE: "{{ ha_machine }}"
+    MACHINE: "{{ home_assistant_ha_machine }}"
 
 - name: Install services for MQTT bridge addon
   ansible.builtin.copy:
@@ -66,7 +66,7 @@
         [Install]
         WantedBy=paths.target
   notify:
-    - systemd daemon-reload
+    - Systemd daemon-reload
 
 - name: Enable services
   ansible.builtin.systemd:

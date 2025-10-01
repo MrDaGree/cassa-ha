@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # chroot connection plugin
 RUN ansible-galaxy collection install community.general
 
-WORKDIR /work
+WORKDIR /ansible
 COPY playbook.yaml .
 COPY roles/ .
 
@@ -19,4 +19,3 @@ COPY entrypoint.sh /usr/local/bin/entrypoint
 RUN chmod +x /usr/local/bin/entrypoint
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
-

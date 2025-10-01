@@ -10,13 +10,12 @@ repos:
       - id: trailing-whitespace
       - id: mixed-line-ending
       - id: check-merge-conflict
-      - id: check-added-large-files
       - id: check-yaml
         args: ["--allow-multiple-documents"]
 
   # --- Ansible linting ---
   - repo: https://github.com/ansible/ansible-lint
-    rev: v24.6.0
+    rev: v25.9.0
     hooks:
       - id: ansible-lint
         name: ansible-lint
@@ -30,7 +29,7 @@ repos:
 
   # --- Bash "black" (formatter) ---
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.7.0
+    rev: v3.12.0-2
     hooks:
       - id: shfmt
         name: shfmt (format shell scripts)

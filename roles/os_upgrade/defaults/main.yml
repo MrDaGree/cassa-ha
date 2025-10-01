@@ -1,5 +1,6 @@
-prev_release: bullseye
-target_release: bookworm
-apt_env:
+os_upgrade_prev_release: bullseye
+os_upgrade_target_rel: bookworm
+os_upgrade_rasp_keyring_path: /usr/share/keyrings/raspbian-archive-keyring.gpg
+os_upgrade_apt_env:
   DEBIAN_FRONTEND: noninteractive
   APT_LISTCHANGES_FRONTEND: none

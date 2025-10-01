@@ -1,5 +1,3 @@
----
-# Guard to block service starts while in chroot/upgrade
 - name: Place policy-rc.d guard
   ansible.builtin.copy:
     dest: /usr/sbin/policy-rc.d
@@ -45,42 +43,49 @@
 - name: Stat /etc/apt/sources.list
   ansible.builtin.stat:
     path: /etc/apt/sources.list
-  register: sl_stat
+  register: os_upgrade_sl_stat
 
 - name: Find *.list in sources.list.d
   ansible.builtin.find:
     paths: /etc/apt/sources.list.d
     patterns: "*.list"
     file_type: file
-  register: listd_files_backports
+  register: os_upgrade_listd_files_backports
 
 - name: Comment out any *-backports in main list
   ansible.builtin.replace:
     path: /etc/apt/sources.list
     regexp: '^(\s*deb(-src)?\s+.*\s(bullseye|bookworm)-backports(\s|/).*)$'
     replace: '# \1'
-  when: sl_stat.stat.exists
+  when: os_upgrade_sl_stat.stat.exists
 
 - name: Comment out any *-backports in list.d
   ansible.builtin.replace:
     path: "{{ item.path }}"
     regexp: '^(\s*deb(-src)?\s+.*\s(bullseye|bookworm)-backports(\s|/).*)$'
     replace: '# \1'
-  loop: "{{ listd_files_backports.files }}"
+  loop: "{{ os_upgrade_listd_files_backports.files }}"
 
-- name: apt-get clean (pre-update)
-  ansible.builtin.command: apt-get clean
-  environment: "{{ apt_env }}"
+- name: Clean apt cache (pre-update)
+  ansible.builtin.apt:
+    clean: true
+  environment: "{{ os_upgrade_apt_env }}"
   changed_when: false
 
-- name: Update APT cache (Debian-only)
-  ansible.builtin.command: apt-get update
-  environment: "{{ apt_env }}"
+- name: Update apt cache (Debian-only)
+  ansible.builtin.apt:
+    update_cache: true
+  environment: "{{ os_upgrade_apt_env }}"
 
-- name: Install gnupg + dirmngr + ca-certificates
-  ansible.builtin.command: >
-    bash -lc "apt-get -y install gnupg dirmngr ca-certificates"
-  environment: "{{ apt_env }}"
+- name: Ensure gnupg, dirmngr, ca-certificates are installed
+  ansible.builtin.apt:
+    name:
+      - gnupg
+      - dirmngr
+      - ca-certificates
+    state: present
+    update_cache: true
+  environment: "{{ os_upgrade_apt_env }}"
 
 - name: Ensure APT dirs exist
   ansible.builtin.file:
@@ -97,35 +102,35 @@
     paths: /etc/apt/sources.list.d
     patterns: "*.list*"
     file_type: file
-  register: listd_files
+  register: os_upgrade_listd_files
 
-- name: Rewrite {{ prev_release }} -> {{ target_release }} in /etc/apt/sources.list
+- name: Rewrite /etc/apt/sources.list
   ansible.builtin.replace:
     path: /etc/apt/sources.list
-    regexp: '\b{{ prev_release }}\b'
-    replace: "{{ target_release }}"
-  when: sl_stat.stat.exists
+    regexp: '\b{{ os_upgrade_prev_release }}\b'
+    replace: "{{ os_upgrade_target_rel }}"
+  when: os_upgrade_sl_stat.stat.exists
 
-- name: Rewrite {{ prev_release }} -> {{ target_release }} in list.d/*.list
+- name: Rewrite list.d/*.list
   ansible.builtin.replace:
     path: "{{ item.path }}"
-    regexp: '\b{{ prev_release }}\b'
-    replace: "{{ target_release }}"
-  loop: "{{ listd_files.files | selectattr('path','search','\\.list$') | list }}"
+    regexp: '\b{{ os_upgrade_prev_release }}\b'
+    replace: "{{ os_upgrade_target_rel }}"
+  loop: "{{ os_upgrade_listd_files.files | selectattr('path', 'search', '\\.list$') | list }}"
 
 - name: Ensure Raspberry Pi archive repo
   ansible.builtin.copy:
     dest: /etc/apt/sources.list.d/raspi.list
     mode: "0644"
     content: |
-      deb http://archive.raspberrypi.com/debian {{ target_release }} main
+      deb http://archive.raspberrypi.com/debian {{ os_upgrade_target_rel }} main
 
 - name: Ensure Raspbian repo
   ansible.builtin.copy:
     dest: /etc/apt/sources.list.d/raspbian.list
     mode: "0644"
     content: |
-      deb http://raspbian.raspberrypi.org/raspbian/ {{ target_release }} main contrib non-free rpi
+      deb http://raspbian.raspberrypi.org/raspbian/ {{ os_upgrade_target_rel }} main contrib non-free rpi
 
 - name: Add Raspbian archive signing key (9165938D90FDDD2E)
   ansible.builtin.apt_key:
@@ -133,102 +138,121 @@
     keyserver: "hkp://keyserver.ubuntu.com:80"
     state: present
 
-- name: Install keyring packages (best-effort)
-  ansible.builtin.command: >
-    bash -lc "apt-get -y install raspbian-archive-keyring debian-archive-keyring raspberrypi-archive-keyring || true"
-  environment: "{{ apt_env }}"
-
 - name: Switch raspbian.list to signed-by when keyring exists
   ansible.builtin.stat:
-    path: /usr/share/keyrings/raspbian-archive-keyring.gpg
-  register: raspbian_kr
+    path: "{{ os_upgrade_rasp_keyring_path }}"
+  register: os_upgrade_raspbian_kr
 
 - name: Use signed-by in raspbian.list
   ansible.builtin.lineinfile:
     path: /etc/apt/sources.list.d/raspbian.list
     regexp: '^deb\s+http://raspbian\.raspberrypi\.org/raspbian/'
-    line: 'deb [signed-by=/usr/share/keyrings/raspbian-archive-keyring.gpg] http://raspbian.raspberrypi.org/raspbian/ {{ target_release }} main contrib non-free rpi'
-  when: raspbian_kr.stat.exists | default(false)
+    line: 'deb [signed-by={{ os_upgrade_rasp_keyring_path }}] http://raspbian.raspberrypi.org/raspbian/ {{ os_upgrade_target_rel }} main contrib non-free rpi'
+  when: os_upgrade_raspbian_kr.stat.exists | default(false)
 
 - name: Ensure bookworm-backports repo is present
   ansible.builtin.copy:
     dest: /etc/apt/sources.list.d/debian-backports.list
     mode: "0644"
     content: |
-      deb http://deb.debian.org/debian {{ target_release }}-backports main contrib non-free non-free-firmware
+      deb http://deb.debian.org/debian {{ os_upgrade_target_rel }}-backports main contrib non-free non-free-firmware
 
-- name: apt-get clean (before full update)
-  ansible.builtin.command: apt-get clean
-  environment: "{{ apt_env }}"
-  changed_when: false
+# Expect to run with become: true at play or task level
+
+- name: Apt clean (before full update)
+  ansible.builtin.apt:
+    autoclean: true
+  environment: "{{ os_upgrade_apt_env }}"
+  changed_when: false  # aligns with your original behavior
 
 - name: Update APT cache (Bookworm)
-  ansible.builtin.command: apt-get update
-  environment: "{{ apt_env }}"
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  environment: "{{ os_upgrade_apt_env }}"
 
 # === Bootstrap zstd-capable dpkg/apt and upgrade passes ===
-- name: Bootstrap dpkg/apt with Zstd support
-  ansible.builtin.command: >
-    bash -lc "apt-get -y install libzstd1 zstd dpkg apt tar"
-  environment: "{{ apt_env }}"
+- name: Ensure zstd-capable tooling is present
+  ansible.builtin.apt:
+    name:
+      - libzstd1
+      - zstd
+      - dpkg
+      - apt
+      - tar
+    state: present
+    update_cache: true
+  environment: "{{ os_upgrade_apt_env }}"
+
+- name: Fix broken packages (best-effort)
+  ansible.builtin.command: apt -y --fix-broken install
+  environment: "{{ os_upgrade_apt_env }}"
+  changed_when: false
+  failed_when: false
 
 - name: Minimal upgrade
   ansible.builtin.command: >
     bash -lc "apt-get -y upgrade -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
-  environment: "{{ apt_env }}"
+  environment: "{{ os_upgrade_apt_env }}"
+  changed_when: false
 
 - name: Dist-upgrade
   ansible.builtin.command: >
     bash -lc "apt-get -y dist-upgrade -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
-  environment: "{{ apt_env }}"
+  environment: "{{ os_upgrade_apt_env }}"
+  changed_when: false
 
 - name: Full-upgrade
   ansible.builtin.command: >
     bash -lc "apt-get -y full-upgrade -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
-  environment: "{{ apt_env }}"
+  environment: "{{ os_upgrade_apt_env }}"
+  changed_when: false
 
 - name: Autoremove (purge)
-  ansible.builtin.command: >
-    bash -lc "apt-get -y --auto-remove --purge autoremove || true"
-  environment: "{{ apt_env }}"
+  ansible.builtin.apt:
+    autoremove: true
+    purge: true
+  environment: "{{ os_upgrade_apt_env }}"
 
-- name: apt-get clean (post-upgrade)
-  ansible.builtin.command: apt-get clean
-  environment: "{{ apt_env }}"
+- name: Apt clean (post-upgrade)
+  ansible.builtin.apt:
+    autoclean: true
+  environment: "{{ os_upgrade_apt_env }}"
   changed_when: false
 
 - name: Ensure dpkg is fully configured
   ansible.builtin.command: dpkg --configure -a
-  register: dpkg_configure
-  changed_when: "'Setting up ' in (dpkg_configure.stdout | default(''))"
+  register: os_upgrade_dpkg_configure
+  changed_when: "'Setting up ' in (os_upgrade_dpkg_configure.stdout | default(''))"
   failed_when: false
 
 - name: Fix broken packages (best-effort)
-  ansible.builtin.command: >
-    bash -lc "apt -y --fix-broken install || true"
-  environment: "{{ apt_env }}"
+  ansible.builtin.command: apt -y --fix-broken install
+  environment: "{{ os_upgrade_apt_env }}"
+  changed_when: false
   failed_when: false
 
 - name: Ensure udisks2 is present (best-effort)
-  ansible.builtin.command: >
-    bash -lc "apt-get -y install udisks2 || true"
-  environment: "{{ apt_env }}"
+  ansible.builtin.apt:
+    name: udisks2
+    state: present
+  environment: "{{ os_upgrade_apt_env }}"
   failed_when: false
 
-# === AppArmor enablement (OS-level) ===
-- name: Ensure "apparmor=1" in cmdline.txt
-  ansible.builtin.shell: |
-    set -e
-    if grep -qw 'apparmor=1' /boot/cmdline.txt; then echo ok; else sed -i 's|$| apparmor=1|' /boot/cmdline.txt; echo changed; fi
-  register: apparmor_flag1
-  changed_when: "'changed' in (apparmor_flag1.stdout|default(''))"
+- name: Ensure "apparmor=1" is present in /boot/cmdline.txt
+  ansible.builtin.lineinfile:
+    path: /boot/cmdline.txt
+    backrefs: true
+    regexp: '^(?:(?!\bapparmor=1\b).)*$'
+    line: '\g<0> apparmor=1'
 
-- name: Ensure "security=apparmor" in cmdline.txt
-  ansible.builtin.shell: |
-    set -e
-    if grep -qw 'security=apparmor' /boot/cmdline.txt; then echo ok; else sed -i 's|$| security=apparmor|' /boot/cmdline.txt; echo changed; fi
-  register: apparmor_flag2
-  changed_when: "'changed' in (apparmor_flag2.stdout|default(''))"
+- name: Ensure "security=apparmor" is present in /boot/cmdline.txt
+  ansible.builtin.lineinfile:
+    path: /boot/cmdline.txt
+    backrefs: true
+    regexp: '^(?:(?!\bsecurity=apparmor\b).)*$'
+    line: '\g<0> security=apparmor'
+  register: os_upgrade_apparmor_flag2
 
 - name: Update fstab
   ansible.builtin.copy:
@@ -249,8 +273,8 @@
   ansible.builtin.apt:
     name: [apparmor, apparmor-utils]
     state: present
-    force_apt_get: yes
-  environment: "{{ apt_env }}"
+    force_apt_get: true
+  environment: "{{ os_upgrade_apt_env }}"
 
 - name: Enable apparmor service (don’t start now)
   ansible.builtin.systemd:
@@ -269,5 +293,103 @@
   ansible.builtin.apt:
     name: cloud-guest-utils
     state: present
-    update_cache: yes
+    update_cache: true
   tags: [growroot]
+
+- name: Remove conflicting Docker/CRI packages
+  become: true
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-doc
+      - docker-compose
+      - podman-docker
+      - containerd
+      - runc
+    state: absent
+    purge: true
+    autoremove: true
+  tags: [docker]
+
+- name: Create APT keyrings directory
+  become: true
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  tags: [docker]
+
+- name: Download Docker GPG (ASCII armored)
+  become: true
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/debian/gpg"
+    dest: /etc/apt/keyrings/docker.gpg.asc
+    mode: "0644"
+  tags: [docker]
+
+- name: Convert Docker GPG to keyring (dearmor)
+  become: true
+  ansible.builtin.command:
+    cmd: "gpg --dearmor -o /etc/apt/keyrings/docker.gpg /etc/apt/keyrings/docker.gpg.asc"
+  args:
+    creates: /etc/apt/keyrings/docker.gpg
+  tags: [docker]
+
+- name: Set os_upgrade_docker_arch fact
+  ansible.builtin.set_fact:
+    os_upgrade_docker_arch: "arm64"
+  tags: [docker]
+
+- name: Add Docker APT repository (signed-by keyring)
+  become: true
+  ansible.builtin.apt_repository:
+    filename: docker
+    repo: >-
+      deb [arch={{ os_upgrade_docker_arch }} signed-by=/etc/apt/keyrings/docker.gpg]
+      https://download.docker.com/linux/debian
+      {{ os_upgrade_target_rel }} stable
+    state: present
+    update_cache: true
+  tags: [docker]
+
+- name: Install Docker Engine and plugins
+  become: true
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  tags: [docker]
+
+- name: Ensure /etc/docker exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    mode: "0755"
+  tags: [docker]
+
+- name: Write Docker daemon.json (journald + overlay2)
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+    content: |
+      {
+        "log-driver": "journald",
+        "storage-driver": "overlay2"
+      }
+  register: os_upgrade_docker_daemonjson
+  tags: [docker]
+
+- name: Ensure Docker service is enabled and started
+  become: true
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: "{{ (os_upgrade_docker_daemonjson.changed | default(false)) | ternary('restarted', 'started') }}"
+  tags: [docker]

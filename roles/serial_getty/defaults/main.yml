@@ -1,2 +1,2 @@
-getty_instance: ttyGS0
-getty_baud: 115200
+serial_getty_getty_instance: ttyGS0
+serial_getty_getty_baud: 115200

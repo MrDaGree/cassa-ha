@@ -1,5 +1,6 @@
 ---
-- hosts: image
+- name: "Create Homey Assistant Restore Image"
+  hosts: image
   gather_facts: false
   roles:
     - role: homey_fixes
