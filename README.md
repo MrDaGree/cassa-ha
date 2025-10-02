@@ -2,10 +2,10 @@
   <img src="images/icon.png" width="200"/>
 </p>
 
-# Homey Assistant
+# Cassa HA
 
-**Homey Assistant** is a bootstrapping Docker tool that converts a **Homey Pro backup** into a fully working **Home Assistant (Supervised)** environment.
-It lets you restore your existing Homey Pro setup as a “Homey Assistant” backup image, ready to run with Home Assistant built-in.
+**Cassa HA** is a bootstrapping Docker tool that converts a **Homey Pro backup** into a fully working **Home Assistant (Supervised)** environment.
+It lets you restore your existing Homey Pro setup as a “Cassa HA” backup image, ready to run with Home Assistant built-in.
 
 ---
 
@@ -64,7 +64,7 @@ It lets you restore your existing Homey Pro setup as a “Homey Assistant” bac
    Use the [USB Tool](https://usb.homey.app/) again, but this time choose **Restore** and select the new file.
    The filename will match your original backup, except `Pro` will be replaced with `Assistant`.
 
-4. **Boot into Homey Assistant**
+4. **Boot into Cassa HA**
 
    * Unplug and replug your Homey Pro (still connected over USB-C).
    * After a few seconds, a serial device should appear.
@@ -99,7 +99,7 @@ It lets you restore your existing Homey Pro setup as a “Homey Assistant” bac
 
 ## Zigbee (ZHA/Z2M)
 
-To utilize Zigbee on the "Homey Assistant", the setup is straight forward and works natively with the hardwarestack. Below is the settings I utilize for my ZHA setup.
+To utilize Zigbee on the "Cassa HA", the setup is straight forward and works natively with the hardwarestack. Below is the settings I utilize for my ZHA setup.
 
 * Radio Type: `ezsp`
 * Serial Port: `/dev/ttyZigbeeNCP`
